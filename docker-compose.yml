@@ -1,0 +1,137 @@
+version: "3.9"
+
+services:
+  # ------------------------------
+  # Postgres DB
+  # ------------------------------
+  db:
+    image: postgres:16
+    container_name: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ghost_admin
+      POSTGRES_PASSWORD: ghost
+      POSTGRES_DB: ghost_blog
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./ghost_blog_backup.sql:/docker-entrypoint-initdb.d/ghost_blog_backup.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - backend_network
+
+  # ------------------------------
+  # Express backend
+  # ------------------------------
+  backend:
+    build:
+      context: ./blog-backend
+    container_name: backend
+    env_file:
+      - ./blog-backend/.env
+    restart: unless-stopped
+    depends_on:
+      - db
+    networks:
+      - backend_network
+    ports:
+      - "3000:3000"
+
+  # ------------------------------
+  # Django admin panel
+  # ------------------------------
+  django:
+    build:
+      context: ./blog-adminpanel
+    container_name: django
+    env_file:
+      - ./blog-adminpanel/.env
+    restart: unless-stopped
+    depends_on:
+      - db
+    networks:
+      - backend_network
+    volumes:
+      - static-data:/app/static   # volume for static files
+    ports:
+      - "8000:8000"
+
+  # ------------------------------
+  # React frontend (with Nginx)
+  # ------------------------------
+  frontend:
+    build:
+      context: ./blog-frontend
+    container_name: frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - django
+    networks:
+      - frontend_network
+      - backend_network
+    ports:
+      - "80:80"
+    volumes:
+      - static-data:/static      # mount same volume to serve Django static files
+
+  # ------------------------------
+  # Prometheus
+  # ------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - backend_network
+
+  # ------------------------------
+  # Grafana
+  # ------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    networks:
+      - backend_network
+    depends_on:
+      - prometheus
+
+  # ------------------------------
+  # cAdvisor (optional)
+  # ------------------------------
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - backend_network
+
+# ------------------------------
+# Volumes
+# ------------------------------
+volumes:
+  db-data:
+  static-data:
+
+# ------------------------------
+# Networks
+# ------------------------------
+networks:
+  backend_network:
+    driver: bridge
+  frontend_network:
+    driver: bridge
+
